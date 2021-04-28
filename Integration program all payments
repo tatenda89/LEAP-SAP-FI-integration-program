@@ -1,0 +1,1617 @@
+*&---------------------------------------------------------------------*
+*& Report  ZPAYMENT_INTERFACE_LEAP
+*&
+*&---------------------------------------------------------------------*
+*&
+*&
+*&---------------------------------------------------------------------*
+
+REPORT  ZPAYMENT_INTERFACE_LEAP2ALL.
+TABLES:TCJ_DOCUMENTS,TCJ_C_JOURNALS.
+PARAMETERS: date1 type sy-datum OBLIGATORY,
+            date2 type sy-datum OBLIGATORY.
+
+*PARAMETERS: cajoname type CJNR OBLIGATORY.
+*SELECT-OPTIONS: cajoname for TCJ_DOCUMENTS-CAJO_NUMBER OBLIGATORY.
+PARAMETERS: curr type TCURR-TCURR OBLIGATORY.
+
+TYPES: Begin of leap_payments1,
+
+""""""""""""""""""""""""""""""""""""""""""""
+
+""""""""""""""""""""""""""""""""""""""""""""
+Office(20),  "NUMBER N "FINANCIAL_TX_OBJ_NUM(20),
+CC(20),"NUMBER  Y "ATTRIBUTE_OBJ_NUM
+Pay_GL_Acc(20), "NUMBER  Y "TX_OBJ_NUM
+Trans_date(20),"NUMBER  N "OBJ_TYPE
+Amount(50),"Amount
+pay_method(10),"payment method
+
+""""""""""""""""""""""""""""""""""""""""""""""""""""
+
+""""""""""""""""""""""""""""""""""""""""""""""""""""
+
+  END OF leap_payments1.
+
+DATA:
+date_for_post type budat,
+ld_header	 TYPE BAPI_CJ_HEADER ,
+ld_company_code	 TYPE BAPI_CJ_HEADER-COMP_CODE ,
+ld_cash_journal_number   TYPE BAPI_CJ_HEADER-CAJO_NUMBER ,
+ld_fiscal_year   TYPE BAPI_CJ_KEY-FISC_YEAR ,
+ld_cash_journal_doc_no   TYPE BAPI_CJ_KEY-POSTING_NUMBER ,
+it_items   TYPE STANDARD TABLE OF BAPI_CJ_ITEMS,"TABLES PARAM
+wa_items   LIKE LINE OF it_items ,
+it_tax_items   TYPE STANDARD TABLE OF BAPI_CJ_TAX_ITEMS,"TABLES PARAM
+wa_tax_items   LIKE LINE OF it_tax_items ,
+it_cpd_items   TYPE STANDARD TABLE OF BAPI_CJ_CPD_ITEMS,"TABLES PARAM
+wa_cpd_items   LIKE LINE OF it_cpd_items ,
+it_wtax_items	 TYPE STANDARD TABLE OF BAPI_CJ_WTAX_ITEMS,"TABLES PARAM
+wa_wtax_items	 LIKE LINE OF it_wtax_items ,
+ld_testrun   TYPE BAPI2021_HELP-TESTRUN ,
+it_extension_in	 TYPE STANDARD TABLE OF BAPIPAREX,"TABLES PARAM
+wa_extension_in	 LIKE LINE OF it_extension_in ,
+it_return	 TYPE STANDARD TABLE OF BAPIRET2,"TABLES PARAM
+wa_return	 LIKE LINE OF it_return .
+
+DATA:
+date_for_post1 type budat,
+ld_header1   TYPE BAPI_CJ_HEADER ,
+ld_company_code1   TYPE BAPI_CJ_HEADER-COMP_CODE ,
+ld_cash_journal_number1   TYPE BAPI_CJ_HEADER-CAJO_NUMBER ,
+ld_fiscal_year1   TYPE BAPI_CJ_KEY-FISC_YEAR ,
+ld_cash_journal_doc_no1   TYPE BAPI_CJ_KEY-POSTING_NUMBER ,
+it_items1   TYPE STANDARD TABLE OF BAPI_CJ_ITEMS,"TABLES PARAM
+wa_items1   LIKE LINE OF it_items ,
+it_tax_items1   TYPE STANDARD TABLE OF BAPI_CJ_TAX_ITEMS,"TABLES PARAM
+wa_tax_items1   LIKE LINE OF it_tax_items ,
+it_cpd_items1   TYPE STANDARD TABLE OF BAPI_CJ_CPD_ITEMS,"TABLES PARAM
+wa_cpd_items1   LIKE LINE OF it_cpd_items ,
+it_wtax_items1   TYPE STANDARD TABLE OF BAPI_CJ_WTAX_ITEMS,"TABLES PARAM
+wa_wtax_items1   LIKE LINE OF it_wtax_items ,
+ld_testrun1   TYPE BAPI2021_HELP-TESTRUN ,
+it_extension_in1   TYPE STANDARD TABLE OF BAPIPAREX,"TABLES PARAM
+wa_extension_in1   LIKE LINE OF it_extension_in ,
+it_return1   TYPE STANDARD TABLE OF BAPIRET2,"TABLES PARAM
+wa_return1   LIKE LINE OF it_return .
+
+DATA: lt_leap_payments1 type table of leap_payments1,
+      ls_leap_payments1 type leap_payments1.
+
+Data txt(20).
+DATA: con LIKE dbcon-con_name VALUE 'TOPROD.TELONE-PROD.LOCAL'.
+DATA:   exc_ref     TYPE  REF TO cx_sy_native_sql_error,
+        error_text  TYPE  string.
+DATA: dbcur type cursor.
+
+
+
+DATA: DAY_STRING1 type string,
+      DAY_STRING2 type string,
+      DAY_STRING3 type string.
+
+DATA: DAY_STRING4 type string,
+      DAY_STRING5 type string,
+      DAY_STRING6 type string.
+
+DATA: FINAL_DATE1 type string,
+      FINAL_DATE2 type string,
+      FINAL_TIME1 type string value '00:00:00',
+      FINAL_TIME2 type string value '00:00:00'.
+
+DATA: cj_name type string,
+      cj_name_clone type string,
+      amount type CJAMOUNT,
+      amount1 type CJAMOUNT,
+      str_amount type string,
+      gl_account type SAKNR.
+DATA: count type i,
+      cajoname type CJNR.
+
+
+DATA: CJ TYPE CJNR,
+      DD TYPE BLDAT,
+      GLACC TYPE HKONT.
+
+DATA: I_COMP_CODE LIKE  TCJ_C_JOURNALS-COMP_CODE,
+      I_CAJO_NUMBER LIKE  TCJ_C_JOURNALS-CAJO_NUMBER,
+      I_CURRENCY  LIKE  TCJ_DOCUMENTS-CURRENCY,
+      I_TYP TYPE  CJTRANSTYP,
+      I_DISPLAY_PERIOD_LO LIKE  SY-DATUM,
+      I_DISPLAY_PERIOD_HI LIKE  SY-DATUM,
+      E_ERROR_NUMBER  LIKE  TCJ_DOCUMENTS-POSTING_NUMBER.
+
+DATA: ITCJ_POSTINGS TYPE  TABLE OF ISCJ_POSTINGS,
+      WA_FBCJ_POST  LIKE LINE OF ITCJ_POSTINGS,
+      ITCJ_WTAX_ITEMS TYPE TABLE OF  TCJ_WTAX_ITEMS,
+      ITCJ_SPLIT_POSTINGS TYPE TABLE OF  ISCJ_POSTINGS,
+      ITCJ_CPD  TYPE  TABLE OF TCJ_CPD.
+*      ITCJ_SEL_CHECKS TYPE STANDARD TABLE OF  ISCJ_POSTINGS.
+
+DATA: P_TOTAL_RECEIPTS  TYPE  CJAMOUNT,
+      P_TOTAL_PAYMENTS  TYPE  CJAMOUNT,
+      P_BEG_BALANCE TYPE  CJAMOUNT,
+P_TOTAL_CHECKS  TYPE  CJAMOUNT,
+P_RUN_BALANCE TYPE  CJAMOUNT,
+P_RUN_CASH_BALANCE  TYPE  CJAMOUNT,
+P_NUMB_OF_REC TYPE  I,
+P_NUMB_OF_PAYM  TYPE  I,
+P_NUMB_OF_CHECKS  TYPE  I.
+
+DATA: ERR_MSG type string.
+
+*TABLES: TCJ_DOCUMENTS.
+TYPES: BEGIN OF ST_TCJ_DOCUMENTS,
+       CAJO_NUMBER type TCJ_DOCUMENTS-CAJO_NUMBER,
+       DOCUMENT_DATE type TCJ_DOCUMENTS-DOCUMENT_DATE,
+       END OF ST_TCJ_DOCUMENTS.
+DATA: LT_TCJ_DOCUMENTS TYPE TABLE OF ST_TCJ_DOCUMENTS,
+      LS_TCJ_DOCUMENTS TYPE ST_TCJ_DOCUMENTS,
+      DETERMIN_VAR TYPE I.
+DATA: D_STATUS type CJDOCSTAT.
+
+TYPES: BEGIN OF ST_TCJ_C_JOURNALS,
+       CAJO_NUMBER type TCJ_DOCUMENTS-CAJO_NUMBER,
+       END OF ST_TCJ_C_JOURNALS.
+
+DATA: LT_ST_TCJ_C_JOURNALS TYPE TABLE OF ST_TCJ_C_JOURNALS,
+      LS_ST_TCJ_C_JOURNALS TYPE ST_TCJ_C_JOURNALS.
+DATA: inda type i,
+      val(4) type n.
+
+
+
+
+
+
+START-OF-SELECTION.
+
+select CAJO_NUMBER DOCUMENT_DATE INTO CORRESPONDING FIELDS OF TABLE  LT_TCJ_DOCUMENTS FROM TCJ_DOCUMENTS  where
+  DOCUMENT_DATE = date1."'20180808'.
+  if sy-subrc EQ 0.
+    DETERMIN_VAR = 999.
+*    write:/ 'You can not re-enter an existing entry!!!!!'.
+*    write:/ 'Either change the date or Cash journal number'.
+*    exit.
+
+  endif.
+
+select CAJO_NUMBER from TCJ_C_JOURNALS INTO CORRESPONDING FIELDS OF TABLE LT_ST_TCJ_C_JOURNALS.
+sort LT_ST_TCJ_C_JOURNALS.
+DELETE ADJACENT DUPLICATES FROM LT_ST_TCJ_C_JOURNALS COMPARING CAJO_NUMBER .
+
+
+
+  "CRANBORNE - hatfield
+  "HARARE SWITCHING - main exchange
+  "WARREN PARK
+  "HARARE MAIN
+
+
+DAY_STRING1 = date1+0(4). "Year
+DAY_STRING2 = date1+4(2). "Month
+DAY_STRING3 = date1+6(2). "Day
+
+DAY_STRING4 = date2+0(4). "Year
+DAY_STRING5 = date2+4(2). "Month
+DAY_STRING6 = date2+6(2). "Day
+
+
+CONCATENATE DAY_STRING3 '/'  DAY_STRING2 '/' DAY_STRING1 ' ' FINAL_TIME1  INTO FINAL_DATE1.
+
+
+
+
+CONCATENATE DAY_STRING6 '/'  DAY_STRING5 '/' DAY_STRING4 ' ' FINAL_TIME2 INTO FINAL_DATE2.
+*TRY.
+*      EXEC SQL .
+*        connect to :con
+*      ENDEXEC.
+*    CATCH cx_sy_native_sql_error INTO exc_ref.
+*      error_text = exc_ref->get_text( ).
+*      MESSAGE error_text TYPE 'E'.
+*ENDTRY.
+
+
+      EXEC SQL .
+        connect to :con
+      ENDEXEC.
+
+IF sy-subrc <> 0.
+*  MESSAGE 'Unable to connect to TOPROD.TELONE-PROD.LOCAL' TYPE 'E' DISPLAY LIKE 'I'.
+  call function 'POPUP_TO_DISPLAY_TEXT'
+     exporting
+      TITEL              = 'ERROR!!'
+       textline1          = 'Unable to connect to TOPROD.TELONE-PROD.LOCAL!!!!!!'
+*      TEXTLINE2          = ' '
+*      START_COLUMN       = 25
+*      START_ROW          = 6
+             .
+  RETURN.
+ENDIF.
+
+
+"write:/ 'connection opened'.
+**  EXEC SQL.
+**     select PM.NAME into :txt from  PAYMENT_METHOD PM
+** ENDEXEC.
+**
+*** EXEC SQL.
+***     close con
+*** ENDEXEC.
+**
+**write:/ txt.
+*SELECT * FROM FINANCIAL_TX WHERE ROWNUM = 2
+* SELECT * FROM FINANCIAL_TX WHERE ROWNUM <= 10
+      EXEC SQL .
+       OPEN dbcur FOR
+select aca.name office, aca.cost_center,aca.payment_gl_account,trunc(f.tx_eff_date+1/12)trans_date,sum(round(f.original_amount,2))amt,p.name payment_method
+FROM to_prod.customer c,to_prod.financial_tx f,to_prod.app_commercial_agency aca,to_prod.payment_method p
+where f.creation_user_id=c.external_cust_id and c.app_commercial_agency_obj_num=aca.app_commercial_agency_obj_num and f.payment_method_obj_num=p.payment_method_obj_num
+AND f.OBJ_TYPE in(1015,1023)
+and f.status=1
+and f.tx_eff_date+1/12 between TO_DATE(:FINAL_DATE1,'DD/MM/YYYY hh24:mi:ss') and TO_DATE(:FINAL_DATE2,'DD/MM/YYYY hh24:mi:ss')
+group by aca.name,aca.cost_center,aca.payment_gl_account,trunc(f.tx_eff_date+1/12),p.name
+      ENDEXEC.
+
+*if sy-subrc eq 0.
+*  write:/ 'success'.
+*ENDIF.
+DO.
+EXEC SQL.
+     FETCH NEXT dbcur INTO :ls_leap_payments1-Office,
+                           :ls_leap_payments1-CC,
+                           :ls_leap_payments1-Pay_GL_Acc,
+                           :ls_leap_payments1-Trans_date,
+                           :ls_leap_payments1-Amount,
+                           :ls_leap_payments1-pay_method
+
+
+
+ENDEXEC.
+  IF sy-subrc <> 0.
+    EXIT.
+  ELSE.
+    APPEND ls_leap_payments1 TO lt_leap_payments1.
+  ENDIF.
+ENDDO.
+
+EXEC SQL.
+  CLOSE dbcur
+ENDEXEC.
+
+EXEC SQL.
+  SET CONNECTION DEFAULT
+ENDEXEC.
+* Print 20 records
+if curr = 'USD'.
+LOOP AT LT_ST_TCJ_C_JOURNALS INTO LS_ST_TCJ_C_JOURNALS." where CAJO_NUMBER ge '0026'.
+LOOP AT lt_leap_payments1 INTO ls_leap_payments1 where pay_method ne 'USD'.
+
+  "Office eq 'MASVINGO MAIN'.
+""""""""""""""""""""""""""""""""""""""""
+clear  ITCJ_POSTINGS.
+clear  it_items.
+clear amount.
+clear str_amount.
+clear cj_name.
+clear  cj_name_clone.
+clear gl_account.
+str_amount = ls_leap_payments1-Amount.
+ REPLACE all OCCURRENCES OF '-' in str_amount WITH ''.
+* amount1 = str_amount + amount1.
+ amount = str_amount.
+*inda = inda + 1.
+*READ TABLE LT_ST_TCJ_C_JOURNALS INTO LS_ST_TCJ_C_JOURNALS index inda.
+cajoname = LS_ST_TCJ_C_JOURNALS-CAJO_NUMBER.
+*if cajoname eq 0000.
+*  cj_name = 'CJ HEAD CUSTOMER SERVICES'.
+*  gl_account = 100000.
+*  ELSEIF cajoname eq 0001.
+*  cj_name = 'CJ REG CSM HARARE & MASH'. "Hapana
+*  cj_name_clone = '' .
+*  gl_account = 100001.
+  IF cajoname eq 0002.
+  cj_name = 'CJ HIGHGLEN CSM'.
+  cj_name_clone = 'SOUTHERTON' .
+  gl_account = 100002.
+  ELSEIF cajoname eq 0003.
+  cj_name = 'CJ AVONDALE CSM'.
+  cj_name_clone ='AVONDALE HOST'.
+  gl_account = 100003.
+  ELSEIF cajoname eq 0004.
+  cj_name = 'CJ HIGHLANDS CSM'.
+  cj_name_clone = 'HIGHLANDS' .
+  gl_account = 100004.
+  ELSEIF cajoname eq 0005.
+  cj_name = 'CJ MASH DISTR CSM'.
+  gl_account = 100005.
+  ELSEIF cajoname eq 0006.
+  cj_name = 'CJ CHINHOYI CSM'.
+  cj_name_clone = 'CHINHOYI' .
+  gl_account = 100006.
+  ELSEIF cajoname eq 0007.
+  cj_name = 'CJ KADOMA CSM'.
+  cj_name_clone = 'KADOMA' .
+  gl_account = 100007.
+  ELSEIF cajoname eq 0008.
+  cj_name = 'CJ BINDURA CSM'.
+  cj_name_clone = 'BINDURA' .
+  gl_account = 100008.
+  ELSEIF cajoname eq 0009.
+  cj_name = 'CJ CHITUNGWIZA CSM'.
+   cj_name_clone = 'CHITUNGWIZA' .
+   gl_account = 100009.
+  ELSEIF cajoname eq 0010.
+  cj_name = 'CJ MARONDERA CSM'.
+  cj_name_clone = 'MARONDERA' .
+  gl_account = 100010.
+****  ELSEIF cajoname eq 0011.
+****  cj_name = 'CJ REG CSM MATEBELELAND'.
+****  gl_account = 100011.
+  ELSEIF cajoname eq 0012.
+  cj_name = 'CJ VICTORIA FALLS CS'.
+  cj_name_clone = 'VICTORIA FALLS' .
+  gl_account = 100012.
+  ELSEIF cajoname eq 0013.
+  cj_name = 'CJ GWANDA CS'.
+  cj_name_clone = 'GWANDA' .
+  gl_account = 100013.
+  ELSEIF cajoname eq 0014.
+  cj_name = 'CJ HWANGE CS'.
+  cj_name_clone = 'HWANGE' .
+  gl_account = 100014.
+  ELSEIF cajoname eq 0015.
+  cj_name = 'CJ BULAWAYO FORT ST CS'.
+  cj_name_clone = 'BULAWAYO MAIN' .
+  gl_account = 100015.
+  ELSEIF cajoname eq 0016.
+  cj_name = 'CJ BELLEVUE CS'.
+  cj_name_clone = 'BELLEVUE' .
+  gl_account = 100016.
+  ELSEIF cajoname eq 0017.
+  cj_name = 'CJ BEITBRIDGE CS'.
+  cj_name_clone = 'BEITBRIDGE' .
+  gl_account = 100017.
+****  ELSEIF cajoname eq 0018.
+****  cj_name = 'CJ REG CSM MANICALAND'.
+****  gl_account = 100018.
+  ELSEIF cajoname eq 0019.
+  cj_name = 'CJ NYANGA CS'.
+  cj_name_clone = 'NYANGA'.
+  gl_account = 100019.
+  ELSEIF cajoname eq 0020.
+  cj_name = 'CJ CHIPINGE CS'.
+  cj_name_clone = 'CHIPINGE'.
+  gl_account = 100020.
+  ELSEIF cajoname eq 0021.
+  cj_name = 'CJ RUSAPE CS'.
+  cj_name_clone = 'RUSAPE'.
+  gl_account = 100021.
+****  ELSEIF cajoname eq 0022.
+****  cj_name = 'CJ REG CSM MIDLANDS'.
+****  gl_account = 100022.
+  ELSEIF cajoname eq 0023.
+  cj_name = 'CJ KWEKWE CS'.
+  cj_name_clone = 'KWEKWE'.
+  gl_account = 100023.
+ ELSEIF cajoname eq 0024.
+  cj_name = 'CJ REG CSM MASVINGO'.
+  cj_name_clone = 'MASVINGO MAIN'.
+  gl_account = 100024.
+  ELSEIF cajoname eq 0025.
+  cj_name = 'CJ CHIREDZI CS'.
+  cj_name_clone = 'CHIREDZI'.
+  gl_account = 100025.
+  ELSEIF cajoname eq 0026.
+  cj_name = 'CJ ZVISHAVANE CS'.
+  cj_name_clone = 'ZVISHAVANE'.
+  gl_account = 100026.
+*****  ELSEIF cajoname eq 0027.
+*****  cj_name = 'CJ CNTR FOR LEARNING HRE'.
+*****  gl_account = 100027.
+****  ELSEIF cajoname eq 0028.
+****  cj_name = 'CJ CNTR FOR LEARNING GWER'.
+****  gl_account = 100028.
+****  ELSEIF cajoname eq 0029.
+****  cj_name = 'CJ MANAGER REPAIRS'.
+****  gl_account = 100029.
+****  ELSEIF cajoname eq 0030.
+****  cj_name = 'CJ REGIONAL MANAGER MASH'.
+****  gl_account = 100030.
+  ELSEIF cajoname eq 0031.
+  cj_name = 'CJ INNEZ TERRACE'.
+  cj_name_clone = 'HARARE MAIN'.
+  gl_account = 100031.
+  ELSEIF cajoname eq 0032.
+  cj_name = 'CJ RUNHARE HOUSE'.
+  cj_name_clone = 'RUNHARE HSE RTGS CAS'.
+  gl_account = 100034.
+***  ELSEIF cajoname eq 0033. """onli in PRD
+***  cj_name = 'CJ LUVEVE CS'.
+***  cj_name_clone = 'LUVEVE'.
+***  gl_account = 100033.
+****  ELSEIF cajoname eq 0034.
+****  cj_name = 'CJ HEAD CUSTOMER SERVICES'.
+****  gl_account = 100000.
+****  ELSEIF cajoname eq 0035.
+****  cj_name = 'CJ REG CSM HARARE & MASH'.
+****  gl_account = 100001.
+****  ELSEIF cajoname eq 0036.
+****  cj_name = 'CJ HIGHGLEN CSM'.
+****  cj_name_clone ='SOUTHERTON'.
+****  gl_account = 100002.
+*  ELSEIF cajoname eq 0037." non-existent
+*  cj_name = 'CJ AVONDALE CSM'.
+*  cj_name_clone ='AVONDALE HOST'.
+*  gl_account = 100003.
+*  ELSEIF cajoname eq 0038. " non-existent
+*  cj_name = 'CJ HIGHLANDS CSM'.
+*  cj_name_clone ='HIGHLANDS'.
+*  gl_account = 100004.
+****  ELSEIF cajoname eq 0039.
+****  cj_name = 'CJ MASH DISTR CSM'.
+****  gl_account = 100005.
+*  ELSEIF cajoname eq 0040.
+*  cj_name = 'CJ CHINHOYI CSM'.
+*  cj_name_clone ='CHINHOYI'.
+*  gl_account = 100006.
+*  ELSEIF cajoname eq 0041.
+*  cj_name = 'CJ KADOMA CSM'.
+*  cj_name_clone ='KADOMA'.
+*  gl_account = 100007.
+*****  cj_name_clone ='KADOMA'.
+*  ELSEIF cajoname eq 0042.
+*  cj_name = 'CJ BINDURA CSM'.
+*  cj_name_clone ='BINDURA'.
+*  gl_account = 100008.
+*  ELSEIF cajoname eq 0043.
+*  cj_name = 'CJ CHITUNGWIZA CSM'.
+*  cj_name_clone ='CHITUNGWIZA'.
+*  gl_account = 100009.
+*  ELSEIF cajoname eq 0044.
+*  cj_name = 'CJ MARONDERA CSM'.
+*  cj_name_clone ='MARONDERA'.
+*  gl_account = 100010.
+****  ELSEIF cajoname eq 0045.
+****  cj_name = 'CJ REG CSM MATEBELELAND'.
+****  gl_account = 100011.
+*  ELSEIF cajoname eq 0046.
+*  cj_name = 'CJ VICTORIA FALLS CS'.
+*  cj_name_clone = 'VICTORIA FALLS'.
+**  gl_account = 100012.
+*  ELSEIF cajoname eq 0047.
+*  cj_name = 'CJ GWANDA CS'.
+*  cj_name_clone = 'GWANDA'.
+*  gl_account = 100013.
+*  ELSEIF cajoname eq 0048.
+*  cj_name = 'CJ HWANGE CS'.
+*  cj_name_clone = 'HWANGE'.
+*  gl_account = 100014.
+*  ELSEIF cajoname eq 0049.
+*  cj_name = 'CJ BULAWAYO FORT ST CS'.
+*  cj_name_clone = 'BULAWAYO MAIN'.
+*  gl_account = 100015.
+*  ELSEIF cajoname eq 0050.
+*  cj_name = 'CJ BELLEVUE CS'.
+*  cj_name_clone = 'BELLEVUE'.
+*  gl_account = 100016.
+*  ELSEIF cajoname eq 0051.
+*  cj_name = 'CJ BEITBRIDGE CS'.
+*  cj_name_clone = 'BEITBRIDGE'.
+*  gl_account = 100017.
+****  ELSEIF cajoname eq 0052.
+****  cj_name = 'CJ REG CSM MANICALAND'.
+****  gl_account = 100018.
+*  ELSEIF cajoname eq 0053.
+*  cj_name = 'CJ NYANGA CS'.
+*  cj_name_clone = 'NYANGA'.
+*  gl_account = 100019.
+*  ELSEIF cajoname eq 0054.
+*  cj_name = 'CJ CHIPINGE CS'.
+*  cj_name_clone = 'CHIPINGE'.
+*  gl_account = 100020.
+*  ELSEIF cajoname eq 0055.
+*  cj_name = 'CJ RUSAPE CS'.
+*  cj_name_clone = 'RUSAPE'.
+*  gl_account = 100021.
+****  ELSEIF cajoname eq 0056.
+****  cj_name = 'CJ REG CSM MIDLANDS'.
+****  gl_account = 100022.
+*  ELSEIF cajoname eq 0057.
+*  cj_name = 'CJ KWEKWE CS'.
+*  cj_name_clone = 'KWEKWE'.
+**  gl_account = 100023.
+*  ELSEIF cajoname eq 0058.
+*  cj_name = 'CJ REG CSM MASVINGO'.
+*  cj_name_clone ='MASVINGO MAIN'.
+*  gl_account = 100024.
+*  ELSEIF cajoname eq 0059.
+*  cj_name = 'CJ CHIREDZI CS'.
+*  cj_name_clone = 'CHIREDZI'.
+*  gl_account = 100025.
+*  ELSEIF cajoname eq 0060.
+*  cj_name = 'CJ ZVISHAVANE CS'.
+*  cj_name_clone = 'ZVISHAVANE'.
+*  gl_account = 100026.
+****  ELSEIF cajoname eq 0061.
+****  cj_name = 'CJ CNTR FOR LEARNING HRE'.
+****  gl_account = 100027.
+****  ELSEIF cajoname eq 0062.
+****  cj_name = 'CJ CNTR FOR LEARNING GWER'.
+****  gl_account = 100028.
+****  ELSEIF cajoname eq 0063.
+****  cj_name = 'CJ REGIONAL MANAGER MASH'.
+****  gl_account = 100030.
+****  ELSEIF cajoname eq 0064.
+****  cj_name = 'CJ MANAGER REPAIRS'.
+****  gl_account = 100029.
+*  ELSEIF cajoname eq 0065. " only in prd
+*  cj_name = 'CJ INEZ TERRACE'.
+*  cj_name_clone = 'HARARE MAIN'.
+*  gl_account = 100031.
+****  ELSEIF cajoname eq 0066.
+****  cj_name = 'FBC BUILDING SOCIETY'.
+****  cj_name_clone = ''.
+****  gl_account = 100035.
+****  ELSEIF cajoname eq 0067.
+****  cj_name = 'NMB BANK'.
+****  cj_name_clone = ''.
+****  gl_account = 100036.
+****  ELSEIF cajoname eq 0068.
+****  cj_name = 'CBZ BANK'.
+****  cj_name_clone = ''.
+****  gl_account = 100037.
+*  ELSEIF cajoname eq 0069.
+*  cj_name = 'CJ RUNHARE'.
+*  cj_name_clone = 'RUNHARE HSE RTGS CAS'.
+*  gl_account = 100038.
+****  ELSEIF cajoname eq 0070. "Not defined in qas """ only in PRD
+****  cj_name = 'CJ WESTGATE CS'.
+****  cj_name_clone = 'WESTGATE'.
+****  gl_account = 100079.
+********  ELSEIF cajoname eq 0071.""""""""""""""only in PRD
+********  cj_name = 'CJ BORROWDALE CS'.
+********   cj_name_clone = 'BORROWDALE'.
+********  gl_account = 100080.
+********  ELSEIF cajoname eq 0074.
+********  cj_name = 'CJ JOINA CITY CS'. """ only in PRD
+********  cj_name_clone ='JOINA CITY'.
+********  gl_account = 100081.
+********  ELSEIF cajoname eq 0076.
+********  cj_name = 'CJ HILLSIDE BYO CS'. """ only in PRD
+********  cj_name_clone ='HILLSIDE'.
+********  gl_account = 100501.
+********  ELSEIF cajoname eq 0079.
+********  cj_name = 'CJ KAMFINSA CS'. """ only in PRD
+********  cj_name_clone ='KAMFINSA'.
+********  gl_account = 100084.
+********  ELSEIF cajoname eq 0081.
+********  cj_name = 'CJ HATFIELD CS'. """ only in PRD
+********  cj_name_clone ='CRANBORNE'.
+********  gl_account = 100086. """""""""""""""
+****   ELSEIF cajoname eq 0083.
+****  cj_name = 'CJ HEAD OFFICE CS'.
+****  gl_account = 100088.
+****  ELSEIF cajoname eq 0085.
+*********  cj_name = 'CJ MAIN EXCHANGE CS'. """ only in PRD
+*********  cj_name_clone ='HARARE SWITCHING'.
+*********  gl_account = 100090.
+*********  ELSEIF cajoname eq 0087.
+*********  cj_name = 'CJ SHOW GROUNDS CS'. """ only in PRD
+*********  cj_name_clone ='EXHIBITION PARK'.
+*********  gl_account = 100092.
+*********  ELSEIF cajoname eq 0089.
+*********  cj_name = 'CJ GLEN VIEW CS'.  """ only in PRD
+*********  cj_name_clone = 'GLEN VIEW'.
+*********  gl_account = 100094. """""""""""""
+****   ELSEIF cajoname eq 0091.
+****  cj_name = 'CJ RTGS CS'.
+****  gl_account = 100096.
+****  "Petty CS"""""""""""""""""""""
+****  ELSEIF cajoname eq 0093.
+****  cj_name = 'PETTY CS RUNHARE HSE'.
+****  cj_name_clone =''.
+****  gl_account = 100098.
+****  ELSEIF cajoname eq 0094.
+****  cj_name = 'PETTY CS MUTARE CS'.
+****  cj_name_clone =''.
+****  gl_account = 100099.
+****  ELSEIF cajoname eq 0095.
+****  cj_name = 'PETTY CS MARONDERA CS'.
+****  cj_name_clone =''.
+****  gl_account = 100100.
+****  ELSEIF cajoname eq 0096.
+****  cj_name = 'PETTY CS CHINHOYI CS'.
+****  cj_name_clone =''.
+****  gl_account = 100101.
+****  ELSEIF cajoname eq 0097.
+****  cj_name = 'PETTY CS GWERU CS'.
+****  cj_name_clone =''.
+****  gl_account = 100102.
+****  ELSEIF cajoname eq 0098.
+****  cj_name = 'PETTY CS MASVINGO CS'.
+****  cj_name_clone =''.
+****  gl_account = 100103.
+****  ELSEIF cajoname eq 0099.
+****  cj_name = 'PETTY CS BULAWAYO CS'.
+****  cj_name_clone =''.
+****  gl_account = 100104.
+****  ELSEIF cajoname eq 0100.
+****  cj_name = 'PETTY CS KWEKWE CS'.
+****  cj_name_clone =''.
+****  gl_account = 100105.
+****  ELSEIF cajoname eq 0101.
+****  cj_name = 'PETTY CS CHIPINGE CS'.
+****  cj_name_clone =''.
+****  gl_account = 100106.
+****  ELSEIF cajoname eq 0102.
+****  cj_name = 'PETTY CS BINDURA CS'.
+****  cj_name_clone =''.
+****  gl_account = 100107.
+****  ELSEIF cajoname eq 0103.
+****  cj_name = 'PETTY CS HWANGE CS'.
+****  cj_name_clone =''.
+****  gl_account = 100108.
+****  ELSEIF cajoname eq 0104.
+****  cj_name = 'PETTY CS GWANDA CS'.
+****  cj_name_clone =''.
+****  gl_account = 100109.
+****  ELSEIF cajoname eq 0105.
+****  cj_name = 'PETTY CS VICTORIA FALL CS'.
+****  cj_name_clone =''.
+****  gl_account = 100110.
+****  ELSEIF cajoname eq 0106.
+****  cj_name = 'PETTY CS RUSAPE CS'.
+****  cj_name_clone =''.
+****  gl_account = 100111.
+****  ELSEIF cajoname eq 0106.
+****  cj_name = 'PETTY CS RUSAPE CS'.
+****  cj_name_clone =''.
+****  gl_account = 100111.
+****  ELSEIF cajoname eq 0107.
+****  cj_name = 'PETTY CS CHIREDZI CS'.
+****  cj_name_clone =''.
+****  gl_account = 100112.
+****  ELSEIF cajoname eq 0108.
+****  cj_name = 'PETTY CS BEITBRIDGE CS'.
+****  cj_name_clone =''.
+****  gl_account = 100113.
+****  ELSEIF cajoname eq 0109.
+****  cj_name = 'PETTY CS FINANCE CS'.
+****  cj_name_clone =''.
+****  gl_account = 100114.
+****  ELSEIF cajoname eq 0110.
+****  cj_name = 'PETTY CS CFL CS'.
+****  cj_name_clone =''.
+****  gl_account = 100115.
+****  ELSEIF cajoname eq 0111.
+****  cj_name = 'PETTY CS I&W DEPT'.
+****  cj_name_clone =''.
+****  gl_account = 100116.
+****  ELSEIF cajoname eq 0112.
+****  cj_name = 'PETTY CS NORTON CS'.
+****  cj_name_clone =''.
+****  gl_account = 100117.
+****  """""""""""""""""""""""""""
+****  ELSEIF cajoname eq 0116.
+****  cj_name = 'CJ MAT DISTRICT CS'.
+****  cj_name_clone ='MAT DISTRICT CASH OF'.
+****  gl_account = 100123.
+****  ELSEIF cajoname eq 0118.
+****  cj_name = 'CJ MABUTWENI CS'.
+****  gl_account = 100121.
+****  ELSEIF cajoname eq 0120.
+****  cj_name = 'CJ MID DISTRICTS CS'.
+****  gl_account = 100125.
+****  ELSEIF cajoname eq 0122. " onli in PRD
+****  cj_name = 'CJ EASTGATE CS'.
+****  cj_name_clone ='EASTGATE'.
+****  gl_account = 100127.
+****
+****  "USD cash journals fbcjc0 onli in PRD
+****  ELSEIF cajoname eq 0124.
+****  cj_name = 'CJ MSASA REPAIRS USD ACC'.
+****  cj_name_clone =''.
+****  gl_account = 100500.
+****  ELSEIF cajoname eq 0125.
+****  cj_name = 'CJ NYERERE USD ACC'.
+****  cj_name_clone ='HARARE MAIN'.
+****  gl_account = 100501.
+****   ELSEIF cajoname eq 0126.
+****  cj_name = 'CJ HIGHGLEN USD ACC'.
+****  cj_name_clone ='SOUTHERTON'.
+****  gl_account = 100502.
+****  ELSEIF cajoname eq 0127.
+****  cj_name = 'CJ AVONDALE USD ACC'.
+****  cj_name_clone ='AVONDALE HOST'.
+****  gl_account = 100503.
+****  ELSEIF cajoname eq 0128.
+****  cj_name = 'CJ HIGHLANDS USD ACC'.
+****  cj_name_clone ='HIGHLANDS'.
+****  gl_account = 100504.
+****  ELSEIF cajoname eq 0129.
+****  cj_name = 'CJ WESTGATE USD ACC'.
+****  cj_name_clone ='WESTGATE'.
+****  gl_account = 100505.
+****  ELSEIF cajoname eq 0130.
+****  cj_name = 'CJ BORROWDALE USD ACC'.
+****  cj_name_clone ='BORROWDALE'.
+****  gl_account = 100506.
+****  ELSEIF cajoname eq 0131.
+****  cj_name = 'CJ CHINHOYI USD ACC'.
+****  cj_name_clone ='CHINHOYI'.
+****  gl_account = 100507.
+****  ELSEIF cajoname eq 0132.
+****  cj_name = 'CJ KADOMA USD ACC'.
+****  cj_name_clone ='KADOMA'.
+****  gl_account = 100508.
+****  ELSEIF cajoname eq 0133.
+****  cj_name = 'CJ BINDURA USD ACC'.
+****  cj_name_clone ='BINDURA'.
+****  gl_account = 100509.
+****  ELSEIF cajoname eq 0134.
+****  cj_name = 'CJ CHITUNGWIZA USD ACC'.
+****  cj_name_clone ='CHITUNGWIZA'.
+****  gl_account = 100510.
+****  ELSEIF cajoname eq 0135.
+****  cj_name = 'CJ MARONDERA USD ACC'.
+****  cj_name_clone ='MARONDERA'.
+****  gl_account = 100511.
+****  ELSEIF cajoname eq 0136.
+****  cj_name = 'CJ LUVEVE USD ACC'.
+****  cj_name_clone ='LUVEVE'.
+****  gl_account = 100512.
+****  ELSEIF cajoname eq 0137.
+****  cj_name = 'CJ BYO MAIN USD ACC'.
+****  cj_name_clone ='BULAWAYO MAIN'.
+****  gl_account = 100513.
+****  ELSEIF cajoname eq 0138.
+****  cj_name = 'CJ VICTORIA FALL USD ACC'.
+****  cj_name_clone ='VICTORIA FALLS'.
+****  gl_account = 100514.
+****  ELSEIF cajoname eq 0139.
+****  cj_name = 'CJ GWANDA USD ACC'.
+****  cj_name_clone ='GWANDA'.
+****  gl_account = 100515.
+****  ELSEIF cajoname eq 0140.
+****  cj_name = 'CJ HWANGE USD ACC'.
+****  cj_name_clone ='HWANGE'.
+****  gl_account = 100516.
+****  ELSEIF cajoname eq 0141.
+****  cj_name = 'CJ BELLEVUE USD ACC'.
+****  cj_name_clone ='BELLEVUE'.
+****  gl_account = 100517.
+****  ELSEIF cajoname eq 0142.
+****  cj_name = 'CJ BEIT BRIDGE USD ACC'.
+****  cj_name_clone ='BEITBRIDGE'.
+****  gl_account = 100518.
+****  ELSEIF cajoname eq 0143.
+****  cj_name = 'CJ HATFIELD USD ACC'.
+****  cj_name_clone ='CRANBORNE'.
+****  gl_account = 100519.
+****  ELSEIF cajoname eq 0144.
+****  cj_name = 'CJ HILLSIDE USD ACC'.
+****  cj_name_clone ='HILLSIDE'.
+****  gl_account = 100520.
+****  ELSEIF cajoname eq 0145.
+****  cj_name = 'CJ MUTARE USD ACC'.
+****  cj_name_clone ='MUTARE MAIN'.
+****  gl_account = 100521.
+****  ELSEIF cajoname eq 0146.
+****  cj_name = 'CJ JOINA CITY USD ACC'.
+****  cj_name_clone ='JOINA CITY'.
+****  gl_account = 100522.
+****  ELSEIF cajoname eq 0147.
+****  cj_name = 'CJ CHIPINGE USD ACC'.
+****  cj_name_clone ='CHIPINGE'.
+****  gl_account = 100523.
+****  ELSEIF cajoname eq 0148.
+****  cj_name = 'CJ RUSAPE USD ACC'.
+****  cj_name_clone ='RUSAPE'.
+****  gl_account = 100524.
+****  ELSEIF cajoname eq 0149.
+****  cj_name = 'CJ HEAD QUARTERS USD ACC'.
+****  cj_name_clone =''.
+****  gl_account = 100525.
+****  ELSEIF cajoname eq 0150.
+****  cj_name = 'CJ SHOW GROUND USD ACC'.
+****  cj_name_clone ='EXHIBITION PARK'.
+****  gl_account = 100526.
+****  ELSEIF cajoname eq 0151.
+****  cj_name = 'CJ GWERU  USD ACC'.
+****  cj_name_clone ='GWERU'.
+****  gl_account = 100527.
+****  ELSEIF cajoname eq 0152.
+****  cj_name = 'CJ KWEKWE USD ACC'.
+****  cj_name_clone ='KWEKWE'.
+****  gl_account = 100528.
+****  ELSEIF cajoname eq 0153.
+****  cj_name = 'CJ MASVINGO USD ACC'.
+****  cj_name_clone ='MASVINGO MAIN'.
+****  gl_account = 100529.
+****  ELSEIF cajoname eq 0154.
+****  cj_name = 'CJ CHIREDZI USD ACC'.
+****  cj_name_clone ='CHIREDZI'.
+****  gl_account = 100530.
+****  ELSEIF cajoname eq 0155.
+****  cj_name = 'CJ ZVISHAVANE USD ACC'.
+****  cj_name_clone ='ZVISHAVANE'.
+****  gl_account = 100531.
+****  ELSEIF cajoname eq 0156.
+****  cj_name = 'CJ HRE MAIN EXCH USD ACC'.
+****  cj_name_clone ='HARARE SWITCHING'.
+****  gl_account = 100532.
+****  ELSEIF cajoname eq 0157.
+****  cj_name = 'CJ GLEN VIEW USD ACC'.
+****  cj_name_clone ='GLEN VIEW'.
+****  gl_account = 100533.
+****  ELSEIF cajoname eq 0158.
+****  cj_name = 'CJ NORTON USD ACC'.
+****  cj_name_clone ='NORTON'.
+****  gl_account = 100534.
+****  ELSEIF cajoname eq 0159.
+****  cj_name = 'CJ WARREN PARK USD ACC'.
+****  cj_name_clone ='WARREN PARK'.
+****  gl_account = 100535.
+****  ELSEIF cajoname eq 0160.
+****  cj_name = 'CJ MAT DISTRICTS USD ACC'.
+****  cj_name_clone =''.
+****  gl_account = 100536.
+****  ELSEIF cajoname eq 0161.
+****  cj_name = 'CJ MABUTWENI USD ACC'.
+****  cj_name_clone =''.
+****  gl_account = 100537.
+****  ELSEIF cajoname eq 0162.
+****  cj_name = 'CJ MID DISTRICTS USD ACC'.
+****  cj_name_clone =''.
+****  gl_account = 100538.
+****  ELSEIF cajoname eq 0163.
+****  cj_name = 'CJ EASTGATE USD ACC'.
+****  cj_name_clone ='EASTGATE'.
+****  gl_account = 100539.
+****  ELSEIF cajoname eq 0164.
+****  cj_name = 'CJ RUNHARE USD ACC'.
+****  cj_name_clone =''.
+****  gl_account = 100540.
+****  ELSEIF cajoname eq 0165.
+****  cj_name = 'CJ RTGS USD ACC'.
+****  cj_name_clone ='RUNHARE HSE RTGS CAS'.
+****  gl_account = 100541.
+****  "petty cs"""""""""""""""""""""
+****  ELSEIF cajoname eq 0166.
+****  cj_name = 'PETTY CS MD`S OFFICE'.
+****  cj_name_clone =''.
+****  gl_account = 100400.
+****  ELSEIF cajoname eq 0167.
+****  cj_name = 'PETTY CS NORTHERN REGION'.
+****  cj_name_clone =''.
+****  gl_account = 100401.
+****  ELSEIF cajoname eq 0168.
+****  cj_name = 'PETTY CS SOUTHERN REGION'.
+****  cj_name_clone =''.
+****  gl_account = 100402.
+****  ELSEIF cajoname eq 0169.
+****  cj_name = 'PETTY CS HARARE REGION'.
+****  cj_name_clone =''.
+****  gl_account = 100403.
+****  ELSEIF cajoname eq 0170.
+****  cj_name = 'PETTY CS MSASA'.
+****  cj_name_clone =''.
+****  gl_account = 100404.
+****  """""""""""""""""""""""""""""""""
+****  ELSEIF cajoname eq 0171.
+****  cj_name = 'CJ TCFL USD ACC'.
+****  cj_name_clone =''.
+****  gl_account = 100542.
+  endif.
+
+if  cj_name_clone is not initial and cj_name_clone = ls_leap_payments1-Office and amount is not initial
+  and cajoname is not initial.
+
+
+""""""""""""""""""""""""""""""""""""""""
+
+
+
+
+"count = count + 1.
+
+ count = count + 1.
+ date_for_post = date1.
+ CJ = cajoname.
+ GLACC = gl_account.
+
+"Cash Jornal update
+*ld_header = 'Check type of data required'.
+ld_header-COMP_CODE = 'TEL1'.
+ld_header-CAJO_NUMBER = CJ."cajoname.
+ld_header-CURRENCY = 'USD'.
+ld_header-DOC_DATE =  date1."'20180808'."DD."'08.08.2010'."date1. " needs attention
+ld_header-PSTNG_DATE = date1."'20180808'."date_for_post."'20100808'."date1. " needs attention
+
+
+
+*ld_testrun = 'some text here'.
+
+
+"populate fields of struture and append to itab
+"yaishanda
+*wa_items-TRANSACT_NUMBER = '0016'."16
+*wa_items-POSITION_NUMBER = count.
+*wa_items-P_RECEIPTS = amount.
+*wa_items-GL_ACCOUNT = '0000100035'. "0000141906. "needs attention
+*wa_items-POSITION_TEXT = 'Total Daily Revenue Collection'. "cj_name_clone.
+
+wa_items-TRANSACT_NUMBER = '0016'."16
+wa_items-POSITION_NUMBER = count.
+wa_items-P_RECEIPTS = amount.
+""""""""""""""""""""""""""""""""""""""""""
+*wa_items-P_PAYMENTS = amount.
+""""""""""""""""""""""""""""""""""""""""""
+"wa_items-GL_ACCOUNT = GLACC."'0000100035'. "0000141906. "needs attention
+wa_items-GL_ACCOUNT = '0000100035'. "0000141906. "GLACC "needs attention
+wa_items-POSITION_TEXT = 'REVENUE COLLECTION'."'Total Daily Revenue Collection'. "cj_name_clone.
+
+append wa_items to it_items .
+********clear wa_items.
+********
+********wa_items-TRANSACT_NUMBER = '0016'."16
+********wa_items-POSITION_NUMBER = count.
+********wa_items-P_PAYMENTS = amount.
+********""""""""""""""""""""""""""""""""""""""""""
+*********wa_items-P_PAYMENTS = amount.
+********""""""""""""""""""""""""""""""""""""""""""
+********"wa_items-GL_ACCOUNT = GLACC."'0000100035'. "0000141906. "needs attention
+********wa_items-GL_ACCOUNT = '0000100035'. "0000141906. "needs attention
+********wa_items-POSITION_TEXT = 'Total Daily Revenue Collection'. "cj_name_clone.
+********append wa_items to it_items .
+
+
+"populate fields of struture and append to itab
+append wa_tax_items to it_tax_items.
+
+
+"populate fields of struture and append to itab
+append wa_cpd_items to it_cpd_items.
+
+
+"populate fields of struture and append to itab
+append wa_wtax_items to it_wtax_items.
+
+
+"populate fields of struture and append to itab
+append wa_extension_in to it_extension_in.
+
+
+"populate fields of struture and append to itab
+append wa_return to it_return.
+.
+*ld_company_code = 'TEL1'.
+*ld_cash_journal_number = cajoname.
+*ld_fiscal_year = 2021.
+*if DETERMIN_VAR is INITIAL."""""""""uncomment here
+"clear wa_items.
+*clear amount.
+CALL FUNCTION 'BAPI_CASHJOURNALDOC_CREATE'
+  EXPORTING
+    header =                     ld_header
+*   testrun =                    ld_testrun
+  IMPORTING
+    company_code =               ld_company_code
+    cash_journal_number =        ld_cash_journal_number
+    fiscal_year =                ld_fiscal_year
+    cash_journal_doc_no =        ld_cash_journal_doc_no
+  TABLES
+    items =                      it_items
+*   tax_items =                  it_tax_items
+*   cpd_items =                  it_cpd_items
+*   wtax_items =                 it_wtax_items
+*   extension_in =               it_extension_in
+    return =                     it_return
+    .  "  BAPI_CASHJOURNALDOC_CREATE
+
+CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'.
+
+IF SY-SUBRC EQ 0.
+  "All OK
+ENDIF.
+
+READ TABLE it_return into wa_return index 1.
+
+READ TABLE it_return into wa_return1 index 2.
+
+******if SY-SUBRC EQ 0.
+******  CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
+*******  WRITE:/ 'Cash Journal Creation Error Message',wa_return1-MESSAGE.
+******  call function 'POPUP_TO_DISPLAY_TEXT'
+******     exporting
+******      TITEL              = 'ERROR!!'
+******       textline1          = wa_return1-MESSAGE
+*******      TEXTLINE2          = ' '
+*******      START_COLUMN       = 25
+*******      START_ROW          = 6
+******             .
+******  RETURN.
+******  endif.
+
+*ENDIF.""""""uncomment here
+*ENDLOOP.
+
+"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+
+"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+
+if ld_cash_journal_number is not initial and ld_cash_journal_doc_no is not initial.
+
+"""""""""POSTING THE DOCUMENT"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+
+I_COMP_CODE	= 'TEL1'.
+I_CAJO_NUMBER = ld_cash_journal_number.
+I_CURRENCY = 'USD'.
+I_TYP	= 'R'."'B'.
+I_DISPLAY_PERIOD_LO	=	date1."SY-DATUM.
+I_DISPLAY_PERIOD_HI	=	date1."SY-DATUM.
+
+*ITCJ_POSTINGS-CAJO_NUMBER = ld_cash_journal_number.
+*ITCJ_POSTINGS-COMP_CODE = 'TEL1'.
+"""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+WA_FBCJ_POST-CAJO_NUMBER = ld_cash_journal_number."CAJO_NUM.
+WA_FBCJ_POST-COMP_CODE = 'TEL1'."COM_CODE.
+WA_FBCJ_POST-FISC_YEAR = DAY_STRING1."'2018'."WA_FINAL-FISCAL_YEAR.
+WA_FBCJ_POST-POSTING_NUMBER = ld_cash_journal_doc_no."WA_FINAL-CJ_DOC_NO.
+WA_FBCJ_POST-H_RECEIPTS = amount."WA_FINAL-P_RECEIPTS.
+WA_FBCJ_POST-H_PAYMENTS = amount."WA_FINAL-P_PAYMENTS.
+WA_FBCJ_POST-H_NET_PAYMENT_WT = amount."WA_FINAL-P_PAYMENTS.
+WA_FBCJ_POST-DOCUMENT_DATE = date1."'20180808'.
+WA_FBCJ_POST-posting_date = date1."'20180808'.
+WA_FBCJ_POST-DOCUMENT_NUMBER = ld_cash_journal_doc_no.
+WA_FBCJ_POST-DOCUMENT_STATUS = 'S'.
+WA_FBCJ_POST-transact_name = 'TELEPHONE REVENUE'. "replace
+WA_FBCJ_POST-position_text  = 'TeleComms Account Collection'.
+WA_FBCJ_POST-kokrs  = 'TEL1'.
+WA_FBCJ_POST-fikrs = 'TEL1'.
+WA_FBCJ_POST-line_sel = 'X'.
+WA_FBCJ_POST-position_number = count. "1. "?
+WA_FBCJ_POST-position_type = 'O'. "?
+WA_FBCJ_POST-p_receipts = amount.
+""""""""""""""""""""""""""""""""""""
+*WA_FBCJ_POST-P_PAYMENTS = amount.
+""""""""""""""""""""""""""""""""""""
+WA_FBCJ_POST-p_net_amount = amount.
+WA_FBCJ_POST-p_fwbas = amount.
+WA_FBCJ_POST-gl_account = '0000100035'.
+
+APPEND WA_FBCJ_POST TO ITCJ_POSTINGS.
+"""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+
+
+CALL FUNCTION 'FCJ_POST'
+  EXPORTING
+    I_COMP_CODE               = I_COMP_CODE
+    I_CAJO_NUMBER             = I_CAJO_NUMBER
+    I_CURRENCY                = I_CURRENCY
+    I_TYP                     = I_TYP
+    I_DISPLAY_PERIOD_LO       = I_DISPLAY_PERIOD_LO"'20180808'"I_DISPLAY_PERIOD_LO
+    I_DISPLAY_PERIOD_HI       = I_DISPLAY_PERIOD_HI"'20180808'"I_DISPLAY_PERIOD_HI
+  IMPORTING
+    E_ERROR_NUMBER            = E_ERROR_NUMBER
+  TABLES
+    ITCJ_POSTINGS             = ITCJ_POSTINGS
+    ITCJ_WTAX_ITEMS           = ITCJ_WTAX_ITEMS
+    ITCJ_SPLIT_POSTINGS       = ITCJ_SPLIT_POSTINGS
+    ITCJ_CPD                  = ITCJ_CPD
+*   ITCJ_SEL_CHECKS           = ITCJ_SEL_CHECKS
+  CHANGING
+    P_BEG_BALANCE             = P_BEG_BALANCE
+    P_TOTAL_RECEIPTS          = P_TOTAL_RECEIPTS
+    P_TOTAL_PAYMENTS          = P_TOTAL_PAYMENTS
+    P_TOTAL_CHECKS            = P_TOTAL_CHECKS
+    P_RUN_BALANCE             = P_RUN_BALANCE
+    P_RUN_CASH_BALANCE        = P_RUN_CASH_BALANCE
+    P_NUMB_OF_REC             = P_NUMB_OF_REC
+    P_NUMB_OF_PAYM            = P_NUMB_OF_PAYM
+    P_NUMB_OF_CHECKS          = P_NUMB_OF_CHECKS
+          .
+
+CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'.
+endif.
+
+select single DOCUMENT_STATUS into D_STATUS from TCJ_DOCUMENTS where CAJO_NUMBER = I_CAJO_NUMBER and POSTING_NUMBER = ld_cash_journal_doc_no.
+
+IF E_ERROR_NUMBER <> ''.
+      CONCATENATE 'Warning! Document [' E_ERROR_NUMBER '] saved but not posted. Check FI configuration.' INTO ERR_MSG.
+    ENDIF.
+
+ENDIF.
+*****call function 'POPUP_TO_DISPLAY_TEXT'
+*****     exporting
+*****      TITEL              = 'ERROR!!'
+*****       textline1          = 'Loop count'
+*****       TEXTLINE2          = inda
+******      START_COLUMN       = 25
+******      START_ROW          = 6
+*****
+
+ENDLOOP."
+endloop.
+
+ELSEIF curr = 'NUSD'.
+LOOP AT LT_ST_TCJ_C_JOURNALS INTO LS_ST_TCJ_C_JOURNALS where CAJO_NUMBER eq '0070'.
+LOOP AT lt_leap_payments1 INTO ls_leap_payments1 where pay_method eq 'USD'.
+  "Office eq 'MASVINGO MAIN'.
+""""""""""""""""""""""""""""""""""""""""
+clear  ITCJ_POSTINGS.
+clear  it_items.
+clear amount.
+clear str_amount.
+clear cj_name.
+clear  cj_name_clone.
+clear gl_account.
+str_amount = ls_leap_payments1-Amount.
+ REPLACE all OCCURRENCES OF '-' in str_amount WITH ''.
+* amount1 = str_amount + amount1.
+ amount = str_amount.
+*inda = inda + 1.
+*READ TABLE LT_ST_TCJ_C_JOURNALS INTO LS_ST_TCJ_C_JOURNALS index inda.
+cajoname = LS_ST_TCJ_C_JOURNALS-CAJO_NUMBER.
+
+
+****
+****  "USD cash journals fbcjc0
+*  IF cajoname eq 0124.
+*  cj_name = 'CJ MSASA REPAIRS USD ACC'.
+*  cj_name_clone =''.
+*  gl_account = 100500.
+*  ELSEIF cajoname eq 0125.
+*  cj_name = 'CJ NYERERE USD ACC'.
+*  cj_name_clone ='HARARE MAIN'.
+*  gl_account = 100501.
+*   ELSEIF cajoname eq 0126.
+*  cj_name = 'CJ HIGHGLEN USD ACC'.
+*  cj_name_clone ='SOUTHERTON'.
+*  gl_account = 100502.
+*  ELSEIF cajoname eq 0127.
+*  cj_name = 'CJ AVONDALE USD ACC'.
+*  cj_name_clone ='AVONDALE HOST'.
+*  gl_account = 100503.
+*  ELSEIF cajoname eq 0128.
+*  cj_name = 'CJ HIGHLANDS USD ACC'.
+*  cj_name_clone ='HIGHLANDS'.
+*  gl_account = 100504.
+*  ELSEIF cajoname eq 0129.
+*  cj_name = 'CJ WESTGATE USD ACC'.
+*  cj_name_clone ='WESTGATE'.
+*  gl_account = 100505.
+*  ELSEIF cajoname eq 0130.
+*  cj_name = 'CJ BORROWDALE USD ACC'.
+*  cj_name_clone ='BORROWDALE'.
+*  gl_account = 100506.
+*  ELSEIF cajoname eq 0131.
+*  cj_name = 'CJ CHINHOYI USD ACC'.
+*  cj_name_clone ='CHINHOYI'.
+*  gl_account = 100507.
+*  ELSEIF cajoname eq 0132.
+*  cj_name = 'CJ KADOMA USD ACC'.
+*  cj_name_clone ='KADOMA'.
+*  gl_account = 100508.
+*  ELSEIF cajoname eq 0133.
+*  cj_name = 'CJ BINDURA USD ACC'.
+*  cj_name_clone ='BINDURA'.
+*  gl_account = 100509.
+*  ELSEIF cajoname eq 0134.
+*  cj_name = 'CJ CHITUNGWIZA USD ACC'.
+*  cj_name_clone ='CHITUNGWIZA'.
+*  gl_account = 100510.
+*  ELSEIF cajoname eq 0135.
+*  cj_name = 'CJ MARONDERA USD ACC'.
+*  cj_name_clone ='MARONDERA'.
+*  gl_account = 100511.
+*  ELSEIF cajoname eq 0136.
+*  cj_name = 'CJ LUVEVE USD ACC'.
+*  cj_name_clone ='LUVEVE'.
+*  gl_account = 100512.
+*  ELSEIF cajoname eq 0137.
+*  cj_name = 'CJ BYO MAIN USD ACC'.
+*  cj_name_clone ='BULAWAYO MAIN'.
+*  gl_account = 100513.
+*  ELSEIF cajoname eq 0138.
+*  cj_name = 'CJ VICTORIA FALL USD ACC'.
+*  cj_name_clone ='VICTORIA FALLS'.
+*  gl_account = 100514.
+*  ELSEIF cajoname eq 0139.
+*  cj_name = 'CJ GWANDA USD ACC'.
+*  cj_name_clone ='GWANDA'.
+*  gl_account = 100515.
+*  ELSEIF cajoname eq 0140.
+*  cj_name = 'CJ HWANGE USD ACC'.
+*  cj_name_clone ='HWANGE'.
+*  gl_account = 100516.
+*  ELSEIF cajoname eq 0141.
+*  cj_name = 'CJ BELLEVUE USD ACC'.
+*  cj_name_clone ='BELLEVUE'.
+*  gl_account = 100517.
+*  ELSEIF cajoname eq 0142.
+*  cj_name = 'CJ BEIT BRIDGE USD ACC'.
+*  cj_name_clone ='BEITBRIDGE'.
+*  gl_account = 100518.
+*  ELSEIF cajoname eq 0143.
+*  cj_name = 'CJ HATFIELD USD ACC'.
+*  cj_name_clone ='CRANBORNE'.
+*  gl_account = 100519.
+*  ELSEIF cajoname eq 0144.
+*  cj_name = 'CJ HILLSIDE USD ACC'.
+*  cj_name_clone ='HILLSIDE'.
+*  gl_account = 100520.
+*  ELSEIF cajoname eq 0145.
+*  cj_name = 'CJ MUTARE USD ACC'.
+*  cj_name_clone ='MUTARE MAIN'.
+*  gl_account = 100521.
+*  ELSEIF cajoname eq 0146.
+*  cj_name = 'CJ JOINA CITY USD ACC'.
+*  cj_name_clone ='JOINA CITY'.
+*  gl_account = 100522.
+*  ELSEIF cajoname eq 0147.
+*  cj_name = 'CJ CHIPINGE USD ACC'.
+*  cj_name_clone ='CHIPINGE'.
+*  gl_account = 100523.
+*  ELSEIF cajoname eq 0148.
+*  cj_name = 'CJ RUSAPE USD ACC'.
+*  cj_name_clone ='RUSAPE'.
+*  gl_account = 100524.
+*  ELSEIF cajoname eq 0149.
+*  cj_name = 'CJ HEAD QUARTERS USD ACC'.
+*  cj_name_clone =''.
+*  gl_account = 100525.
+*  ELSEIF cajoname eq 0150.
+*  cj_name = 'CJ SHOW GROUND USD ACC'.
+*  cj_name_clone ='EXHIBITION PARK'.
+*  gl_account = 100526.
+*  ELSEIF cajoname eq 0151.
+*  cj_name = 'CJ GWERU  USD ACC'.
+*  cj_name_clone ='GWERU'.
+*  gl_account = 100527.
+*  ELSEIF cajoname eq 0152.
+*  cj_name = 'CJ KWEKWE USD ACC'.
+*  cj_name_clone ='KWEKWE'.
+*  gl_account = 100528.
+*  ELSEIF cajoname eq 0153.
+*  cj_name = 'CJ MASVINGO USD ACC'.
+*  cj_name_clone ='MASVINGO MAIN'.
+*  gl_account = 100529.
+*  ELSEIF cajoname eq 0154.
+*  cj_name = 'CJ CHIREDZI USD ACC'.
+*  cj_name_clone ='CHIREDZI'.
+*  gl_account = 100530.
+*  ELSEIF cajoname eq 0155.
+*  cj_name = 'CJ ZVISHAVANE USD ACC'.
+*  cj_name_clone ='ZVISHAVANE'.
+*  gl_account = 100531.
+*  ELSEIF cajoname eq 0156.
+*  cj_name = 'CJ HRE MAIN EXCH USD ACC'.
+*  cj_name_clone ='HARARE SWITCHING'.
+*  gl_account = 100532.
+*  ELSEIF cajoname eq 0157.
+*  cj_name = 'CJ GLEN VIEW USD ACC'.
+*  cj_name_clone ='GLEN VIEW'.
+*  gl_account = 100533.
+*  ELSEIF cajoname eq 0158.
+*  cj_name = 'CJ NORTON USD ACC'.
+*  cj_name_clone ='NORTON'.
+*  gl_account = 100534.
+*  ELSEIF cajoname eq 0159.
+*  cj_name = 'CJ WARREN PARK USD ACC'.
+*  cj_name_clone ='WARREN PARK'.
+*  gl_account = 100535.
+*  ELSEIF cajoname eq 0160.
+*  cj_name = 'CJ MAT DISTRICTS USD ACC'.
+*  cj_name_clone =''.
+*  gl_account = 100536.
+*  ELSEIF cajoname eq 0161.
+*  cj_name = 'CJ MABUTWENI USD ACC'.
+*  cj_name_clone =''.
+*  gl_account = 100537.
+*  ELSEIF cajoname eq 0162.
+*  cj_name = 'CJ MID DISTRICTS USD ACC'.
+*  cj_name_clone =''.
+*  gl_account = 100538.
+*  ELSEIF cajoname eq 0163.
+*  cj_name = 'CJ EASTGATE USD ACC'.
+*  cj_name_clone ='EASTGATE'.
+*  gl_account = 100539.
+*  ELSEIF cajoname eq 0164.
+*  cj_name = 'CJ RUNHARE USD ACC'.
+*  cj_name_clone =''.
+*  gl_account = 100540.
+*  ELSEIF cajoname eq 0165.
+*  cj_name = 'CJ RTGS USD ACC'.
+*  cj_name_clone =''.
+*  gl_account = 100541.
+*****  "petty cs"""""""""""""""""""""
+*
+*  endif.
+IF cajoname eq 0070.
+  cj_name = 'JULIUS NYERERE USD'.
+  cj_name_clone =: 'WARREN PARK' , 'HILLSIDE'.
+  gl_account = 100501.
+  endif.
+
+if  cj_name_clone is not initial and cj_name_clone = ls_leap_payments1-Office and amount is not initial
+  and cajoname is not initial.
+
+
+""""""""""""""""""""""""""""""""""""""""
+
+
+
+
+"count = count + 1.
+
+ count = count + 1.
+ date_for_post = date1.
+ CJ = cajoname.
+ GLACC = gl_account.
+
+"Cash Jornal update
+*ld_header = 'Check type of data required'.
+ld_header-COMP_CODE = 'TEL1'.
+ld_header-CAJO_NUMBER = CJ."cajoname.
+ld_header-CURRENCY = 'NUSD'.
+ld_header-DOC_DATE =  date1."'20180808'."DD."'08.08.2010'."date1. " needs attention
+ld_header-PSTNG_DATE = date1."'20180808'."date_for_post."'20100808'."date1. " needs attention
+
+
+
+*ld_testrun = 'some text here'.
+
+
+"populate fields of struture and append to itab
+"yaishanda
+*wa_items-TRANSACT_NUMBER = '0016'."16
+*wa_items-POSITION_NUMBER = count.
+*wa_items-P_RECEIPTS = amount.
+*wa_items-GL_ACCOUNT = '0000100035'. "0000141906. "needs attention
+*wa_items-POSITION_TEXT = 'Total Daily Revenue Collection'. "cj_name_clone.
+
+wa_items-TRANSACT_NUMBER = '0016'."16
+wa_items-POSITION_NUMBER = count.
+wa_items-P_RECEIPTS = amount.
+""""""""""""""""""""""""""""""""""""""""""
+*wa_items-P_PAYMENTS = amount.
+""""""""""""""""""""""""""""""""""""""""""
+"wa_items-GL_ACCOUNT = GLACC."'0000100035'. "0000141906. "needs attention
+wa_items-GL_ACCOUNT = '0000100501'. "0000141906. "GLACC "needs attention
+wa_items-POSITION_TEXT = 'REVENUE COLLECTION'."'Total Daily Revenue Collection'. "cj_name_clone.
+
+append wa_items to it_items .
+********clear wa_items.
+********
+********wa_items-TRANSACT_NUMBER = '0016'."16
+********wa_items-POSITION_NUMBER = count.
+********wa_items-P_PAYMENTS = amount.
+********""""""""""""""""""""""""""""""""""""""""""
+*********wa_items-P_PAYMENTS = amount.
+********""""""""""""""""""""""""""""""""""""""""""
+********"wa_items-GL_ACCOUNT = GLACC."'0000100035'. "0000141906. "needs attention
+********wa_items-GL_ACCOUNT = '0000100035'. "0000141906. "needs attention
+********wa_items-POSITION_TEXT = 'Total Daily Revenue Collection'. "cj_name_clone.
+********append wa_items to it_items .
+
+
+"populate fields of struture and append to itab
+append wa_tax_items to it_tax_items.
+
+
+"populate fields of struture and append to itab
+append wa_cpd_items to it_cpd_items.
+
+
+"populate fields of struture and append to itab
+append wa_wtax_items to it_wtax_items.
+
+
+"populate fields of struture and append to itab
+append wa_extension_in to it_extension_in.
+
+
+"populate fields of struture and append to itab
+append wa_return to it_return.
+.
+*ld_company_code = 'TEL1'.
+*ld_cash_journal_number = cajoname.
+*ld_fiscal_year = 2021.
+*if DETERMIN_VAR is INITIAL."""""""""uncomment here
+"clear wa_items.
+*clear amount.
+CALL FUNCTION 'BAPI_CASHJOURNALDOC_CREATE'
+  EXPORTING
+    header =                     ld_header
+*   testrun =                    ld_testrun
+  IMPORTING
+    company_code =               ld_company_code
+    cash_journal_number =        ld_cash_journal_number
+    fiscal_year =                ld_fiscal_year
+    cash_journal_doc_no =        ld_cash_journal_doc_no
+  TABLES
+    items =                      it_items
+*   tax_items =                  it_tax_items
+*   cpd_items =                  it_cpd_items
+*   wtax_items =                 it_wtax_items
+*   extension_in =               it_extension_in
+    return =                     it_return
+    .  "  BAPI_CASHJOURNALDOC_CREATE
+
+CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'.
+
+IF SY-SUBRC EQ 0.
+  "All OK
+ENDIF.
+
+READ TABLE it_return into wa_return index 1.
+
+READ TABLE it_return into wa_return1 index 2.
+
+******if SY-SUBRC EQ 0.
+******  CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
+*******  WRITE:/ 'Cash Journal Creation Error Message',wa_return1-MESSAGE.
+******  call function 'POPUP_TO_DISPLAY_TEXT'
+******     exporting
+******      TITEL              = 'ERROR!!'
+******       textline1          = wa_return1-MESSAGE
+*******      TEXTLINE2          = ' '
+*******      START_COLUMN       = 25
+*******      START_ROW          = 6
+******             .
+******  RETURN.
+******  endif.
+
+*ENDIF.""""""uncomment here
+*ENDLOOP.
+
+"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+
+"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+
+if ld_cash_journal_number is not initial and ld_cash_journal_doc_no is not initial.
+
+"""""""""POSTING THE DOCUMENT"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+
+I_COMP_CODE	= 'TEL1'.
+I_CAJO_NUMBER = ld_cash_journal_number.
+I_CURRENCY = 'NUSD'.
+I_TYP	= 'R'."'B'.
+I_DISPLAY_PERIOD_LO	=	date1."SY-DATUM.
+I_DISPLAY_PERIOD_HI	=	date1."SY-DATUM.
+
+*ITCJ_POSTINGS-CAJO_NUMBER = ld_cash_journal_number.
+*ITCJ_POSTINGS-COMP_CODE = 'TEL1'.
+"""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+WA_FBCJ_POST-CAJO_NUMBER = ld_cash_journal_number."CAJO_NUM.
+WA_FBCJ_POST-COMP_CODE = 'TEL1'."COM_CODE.
+WA_FBCJ_POST-FISC_YEAR = DAY_STRING1."'2018'."WA_FINAL-FISCAL_YEAR.
+WA_FBCJ_POST-POSTING_NUMBER = ld_cash_journal_doc_no."WA_FINAL-CJ_DOC_NO.
+WA_FBCJ_POST-H_RECEIPTS = amount."WA_FINAL-P_RECEIPTS.
+WA_FBCJ_POST-H_PAYMENTS = amount."WA_FINAL-P_PAYMENTS.
+WA_FBCJ_POST-H_NET_PAYMENT_WT = amount."WA_FINAL-P_PAYMENTS.
+WA_FBCJ_POST-DOCUMENT_DATE = date1."'20180808'.
+WA_FBCJ_POST-posting_date = date1."'20180808'.
+WA_FBCJ_POST-DOCUMENT_NUMBER = ld_cash_journal_doc_no.
+WA_FBCJ_POST-DOCUMENT_STATUS = 'S'.
+WA_FBCJ_POST-transact_name = 'TELEPHONE REVENUE'. "replace
+WA_FBCJ_POST-position_text  = 'TeleComms Account Collection'.
+WA_FBCJ_POST-kokrs  = 'TEL1'.
+WA_FBCJ_POST-fikrs = 'TEL1'.
+WA_FBCJ_POST-line_sel = 'X'.
+WA_FBCJ_POST-position_number = count. "1. "?
+WA_FBCJ_POST-position_type = 'O'. "?
+WA_FBCJ_POST-p_receipts = amount.
+""""""""""""""""""""""""""""""""""""
+*WA_FBCJ_POST-P_PAYMENTS = amount.
+""""""""""""""""""""""""""""""""""""
+WA_FBCJ_POST-p_net_amount = amount.
+WA_FBCJ_POST-p_fwbas = amount.
+WA_FBCJ_POST-gl_account = '0000100035'.
+
+APPEND WA_FBCJ_POST TO ITCJ_POSTINGS.
+"""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+
+
+CALL FUNCTION 'FCJ_POST'
+  EXPORTING
+    I_COMP_CODE               = I_COMP_CODE
+    I_CAJO_NUMBER             = I_CAJO_NUMBER
+    I_CURRENCY                = I_CURRENCY
+    I_TYP                     = I_TYP
+    I_DISPLAY_PERIOD_LO       = I_DISPLAY_PERIOD_LO"'20180808'"I_DISPLAY_PERIOD_LO
+    I_DISPLAY_PERIOD_HI       = I_DISPLAY_PERIOD_HI"'20180808'"I_DISPLAY_PERIOD_HI
+  IMPORTING
+    E_ERROR_NUMBER            = E_ERROR_NUMBER
+  TABLES
+    ITCJ_POSTINGS             = ITCJ_POSTINGS
+    ITCJ_WTAX_ITEMS           = ITCJ_WTAX_ITEMS
+    ITCJ_SPLIT_POSTINGS       = ITCJ_SPLIT_POSTINGS
+    ITCJ_CPD                  = ITCJ_CPD
+*   ITCJ_SEL_CHECKS           = ITCJ_SEL_CHECKS
+  CHANGING
+    P_BEG_BALANCE             = P_BEG_BALANCE
+    P_TOTAL_RECEIPTS          = P_TOTAL_RECEIPTS
+    P_TOTAL_PAYMENTS          = P_TOTAL_PAYMENTS
+    P_TOTAL_CHECKS            = P_TOTAL_CHECKS
+    P_RUN_BALANCE             = P_RUN_BALANCE
+    P_RUN_CASH_BALANCE        = P_RUN_CASH_BALANCE
+    P_NUMB_OF_REC             = P_NUMB_OF_REC
+    P_NUMB_OF_PAYM            = P_NUMB_OF_PAYM
+    P_NUMB_OF_CHECKS          = P_NUMB_OF_CHECKS
+          .
+
+CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'.
+endif.
+
+select single DOCUMENT_STATUS into D_STATUS from TCJ_DOCUMENTS where CAJO_NUMBER = I_CAJO_NUMBER and POSTING_NUMBER = ld_cash_journal_doc_no.
+
+IF E_ERROR_NUMBER <> ''.
+      CONCATENATE 'Warning! Document [' E_ERROR_NUMBER '] saved but not posted. Check FI configuration.' INTO ERR_MSG.
+    ENDIF.
+
+ENDIF.
+
+
+
+ENDLOOP.
+ENDLOOP.
+endif.
+
+
+
+
+
+select count(*) into val from TCJ_DOCUMENTS where DOCUMENT_DATE = date1.
+write:/ 'Number of records posted',val.
+write:/ 'Date posted', date1.
+
+*IF D_STATUS eq 'P'.
+*  WRITE:/ 'Successfully Posted (FI/CO interface)'.
+*
+*WRITE:/ 'CASH JOURNAL DOCUMENT NUMBER ',
+*        ld_cash_journal_doc_no.
+*
+*WRITE:/ 'COMPANY CODE ',
+*        ld_company_code.
+*
+*WRITE:/ 'CASH JOURNAL NUMBER ',
+*        ld_cash_journal_number.
+*
+*WRITE:/ 'FISCAL YEAR',
+*        ld_fiscal_year.
+*
+*WRITE:/ 'DOCUMENT DATE',date1.
+*
+*write:/ 'Cash Journal Creation Message',wa_return-MESSAGE.
+*write:/ 'Cash Journal Creation Message',wa_return1-MESSAGE.
+*
+*
+*WRITE:/ 'POSTING ERROR MESSAGE NUMBER ' ,ERR_MSG.
+*
+*ELSEIF D_STATUS eq 'S'.
+*  WRITE:/ 'Successfully saved in Cash Journal but not Posted'.
+*
+*WRITE:/ 'CASH JOURNAL DOCUMENT NUMBER ',
+*        ld_cash_journal_doc_no.
+*
+*WRITE:/ 'COMPANY CODE ',
+*        ld_company_code.
+*
+*WRITE:/ 'CASH JOURNAL NUMBER ',
+*        ld_cash_journal_number.
+*
+*WRITE:/ 'FISCAL YEAR',
+*        ld_fiscal_year.
+*
+*WRITE:/ 'DOCUMENT DATE',date1.
+*
+*
+*write:/ 'Cash Journal Creation Message',wa_return-MESSAGE.
+*
+*WRITE:/ 'POSTING ERROR MESSAGE NUMBER ' ,ERR_MSG.
+*ENDIF.
+**ENDLOOP.
